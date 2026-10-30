@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux Server Migration Dashboard</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#0f172a}
+header{background:#172554;color:white;text-align:center;padding:22px 12px}header h1{margin:0 0 6px;font-size:26px}
+header p{margin:0;color:#cbd5e1;font-size:13px}main{max-width:1120px;margin:auto;padding:22px 16px 40px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:18px}
+.card,section{background:white;border-radius:10px;box-shadow:0 1px 4px #0f172a20}
+.card{padding:16px 18px}.card h3{margin:0 0 10px;font-size:13px}.big{font-size:27px;font-weight:bold;color:#2563eb}
+.ok{color:#16a34a}.bad{color:#dc2626}.card small{display:block;margin-top:8px;font-size:11px;color:#64748b}
+section{padding:18px 20px;margin-bottom:18px;overflow-x:auto}section h2{margin:0 0 12px;font-size:18px}
+table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;background:#f1f5f9;padding:7px;border-bottom:2px solid #cbd5e1}
+td{padding:7px;border-bottom:1px solid #e2e8f0}.mono,pre{font-family:monospace;font-size:11px}
+.pill{display:inline-block;padding:3px 9px;border-radius:10px;font-size:11px;font-weight:bold;background:#fee2e2;color:#991b1b}
+.pill.ok{background:#dcfce7;color:#166534}button{background:#2563eb;color:white;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;margin:0 8px 12px 0}
+pre{white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;padding:12px;overflow:auto}
+.note{font-size:11px;color:#64748b}@media(max-width:800px){.cards{grid-template-columns:1fr 1fr}}
+</style></head>
+<body>
+<header><h1>Linux Server Migration Dashboard</h1><p>Source 192.168.56.10 → Destination 192.168.56.20 · Storage, identities, integrity, backups and security</p></header>
+<main>
+<div class="cards">
+<div class="card"><h3>Migration Status</h3><div class="big" id="status">Loading</div><small id="host"></small></div>
+<div class="card"><h3>Checks Passed</h3><div class="big" id="passed">—</div><small>Live checks against source baseline</small></div>
+<div class="card"><h3>Data Volume Used</h3><div class="big" id="data">—</div><small id="dataSub"></small></div>
+<div class="card"><h3>Backup Volume Used</h3><div class="big" id="backup">—</div><small id="backupSub"></small></div>
+</div>
+<section><h2>Storage Layers</h2><table id="storage"></table></section>
+<section><h2>User and Group Identities</h2><table id="identities"></table></section>
+<section><h2>Data Verification</h2><table id="migration"></table><p class="note" id="migrationNote"></p></section>
+<section><h2>Access-Control Tests</h2><table id="access"></table></section>
+<section><h2>Backup and Recovery</h2><table id="backups"></table><p class="note" id="cron"></p></section>
+<section><h2>Services and Firewall</h2><table id="security"></table></section>
+<section><h2>Acceptance Checklist</h2><table id="checks"></table></section>
+<section><h2>Backup Logs</h2><button onclick="loadLogs()">Refresh Logs</button><pre id="logs">Loading...</pre></section>
+<section><h2>Verification Report</h2><button onclick="loadSummary()">Refresh All Checks</button><button onclick="loadReport()">Generate Report</button><pre id="report">Press Generate Report to save reports/migration_report.txt.</pre></section>
+</main>
+<script>
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function table(id,heads,rows){document.getElementById(id).innerHTML="<tr>"+heads.map(x=>"<th>"+esc(x)+"</th>").join("")+"</tr>"+rows.map(r=>"<tr>"+r.map(x=>"<td>"+x+"</td>").join("")+"</tr>").join("");}
+function td(v,mono=false){return `<span${mono?' class="mono"':''}>${esc(v)}</span>`}
+function pill(ok,yes="PASS",no="FAIL"){return `<span class="pill ${ok?'ok':''}">${ok?yes:no}</span>`}
+function size(n){if(n>=1073741824)return (n/1073741824).toFixed(1)+" GiB";if(n>=1024)return Math.round(n/1024)+" KiB";return n+" B"}
+function pct(n){return n<1?"<1%":Math.round(n)+"%"}
+async function loadSummary(){
+ try{
+ const d=await (await fetch("/api/summary")).json(),good=d.status==="VERIFIED";
+ const status=document.getElementById("status");status.textContent=d.status;status.className="big "+(good?"ok":"bad");
+ document.getElementById("host").textContent="Checked "+d.generated+" on "+d.host;
+ document.getElementById("passed").textContent=d.passed+" / "+d.total;
+ const m=d.storage.mounts.lv_data,b=d.storage.mounts.lv_backup;
+ document.getElementById("data").textContent=pct(m.pct);document.getElementById("dataSub").textContent=size(m.used)+" of "+size(m.size)+" · "+m.mount;
+ document.getElementById("backup").textContent=pct(b.pct);document.getElementById("backupSub").textContent=size(b.used)+" of "+size(b.size)+" · "+b.mount;
+ table("storage",["Layer","Name","Details"],d.storage.layers.map(x=>[td(x.layer),td(x.name,true),td(x.detail)]));
+ table("identities",["Type","Name","Source UID:GID","Destination UID:GID","Result"],d.identities.rows.map(x=>[td(x.kind),td(x.name),td(x.source,true),td(x.dest,true),pill(x.ok,"IDENTICAL","DIFFERENT")]));
+ table("migration",["Path","Type","Owner:Group","Mode","SHA-256 (first 12)","Result"],d.migration.rows.map(x=>[td(x.path,true),td(x.type),td(x.owner,true),td(x.mode,true),td(x.sha,true),pill(x.ok,"MATCH",x.note||"DIFFERENT")]));
+ document.getElementById("migrationNote").textContent=`${d.migration.files} files, ${d.migration.dirs} directories · ACL entries: ${d.migration.acl} · xattr files: ${d.migration.xattr}`;
+ table("access",["Test","Expected","Actual","Result"],d.migration.tests.map(x=>[td(x.test),td(x.expected),td(x.actual),pill(x.ok)]));
+ table("backups",["Archive","Size","Created","Mode","Content matches","Checksum"],d.backup.rows.map(x=>[td(x.name,true),td(x.size),td(x.time),td(x.mode,true),pill(x.content,"MATCH","DIFFERENT"),td(x.checksum)]));
+ document.getElementById("cron").textContent="Cron: "+(d.backup.cron||"not scheduled");
+ const sr=d.security.services.map(x=>[td(x.service,true),td(x.state),pill(x.ok,"ACTIVE","NOT ACTIVE")]);
+ sr.push([td("firewall services",true),td(d.security.firewall),pill(d.security.firewall.split(/\s+/).includes("ssh"),"SSH ALLOWED","SSH BLOCKED")]);
+ table("security",["Item","State","Result"],sr);
+ table("checks",["Area","Check","Detail","Result"],d.checks.map(x=>[td(x.group),td(x.name),td(x.detail),pill(x.ok)]));
+ }catch(e){document.getElementById("status").textContent="ERROR";document.getElementById("host").textContent=String(e)}
+}
+async function loadLogs(){try{const d=await(await fetch("/api/logs")).json();document.getElementById("logs").textContent=d.logs.length?d.logs.join("\n"):"No backup log available."}catch(e){document.getElementById("logs").textContent=String(e)}}
+async function loadReport(){try{const d=await(await fetch("/api/report")).json();document.getElementById("report").textContent=d.report+"\nSaved to: "+d.saved_to}catch(e){document.getElementById("report").textContent=String(e)}}
+loadSummary();loadLogs();setInterval(loadSummary,30000);
+</script></body></html>
